@@ -18,7 +18,7 @@ const AUTH_TOKEN = API_KEY;
 const RPC_BASE_URL = `https://${SUPABASE_PROJECT_REF}.supabase.co/rest/v1/rpc/`;
 const ENDPOINTS = {
   getCustomer: `${RPC_BASE_URL}get_customer_unified_search`,
-  webexAction: 'https://hooks.us.webexconnect.io/events/RHV57QR4M3'
+  webexAction: 'https://hooks.sg.webexconnect.io/events/MDU4VJ0WB4'
 };
 
 let latestCustomer = null;
