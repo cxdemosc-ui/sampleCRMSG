@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SampleCRM Portal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet"
+        href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="container wide-container mt-4" id="crm-app">
+  <!-- Header -->
+  <div class="d-flex align-items-center mb-3">
+    <img src="https://raw.githubusercontent.com/cxdemosc-ui/sampleCRM/main/CRM_sample_image.png"
+         alt="SampleCRM Logo" class="crm-icon" />
+    <h1 class="mb-0">Custom CRM</h1>
+    <div id="currentDate" class="ml-auto text-muted small"></div>
+  </div>
+
+  <!-- Search -->
+  <div id="search-section" class="mb-4">
+    <label for="searchMobile" class="font-weight-bold">
+      Enter Mobile Number, Account Number, or Email:
+    </label>
+    <input type="text" id="searchMobile"
+           placeholder="Mobile Number, Account Number, or Email"
+           class="form-control" autocomplete="off" />
+    <button id="searchBtn" class="btn btn-primary mt-2">Search</button>
+  </div>
+
+  <!-- Messages -->
+  <div id="messageBar" class="alert mt-3" style="display:none;"></div>
+
+  <!-- Customer details container -->
+  <div id="customer-details" style="display:none;"></div>
+
+  <!-- New Service Request Modal -->
+  <div class="modal fade" id="newSRModal" tabindex="-1" role="dialog" aria-labelledby="newSRLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <form id="newSRForm" class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="newSRLabel">Create New Service Request</h5>
+          <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <div id="newSRAlert" style="display:none" class="alert"></div>
+          <div class="form-group">
+            <label for="srType">Service Request Type</label>
+            <select id="srType" class="form-control" required>
+              <option value="">Select Type</option>
+              <option>Account Support</option>
+              <option>PIN Reset</option>
+              <option>Lost Card</option>
+              <option>Card Dispute</option>
+              <option>General Inquiry</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="srDesc">Description</label>
+            <textarea id="srDesc" class="form-control" rows="3" required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary btn-demo">Create Request</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit / Update / Close Service Request Modal -->
+  <div class="modal fade" id="editSRModal" tabindex="-1" role="dialog" aria-labelledby="editSRModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <form id="editSRForm" class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editSRModalLabel">Update Service Request</h5>
+          <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <div id="editSRAlert" style="display:none" class="alert"></div>
+          <input type="hidden" id="editSRAction" />
+          <div class="form-group">
+            <label for="editSRType">Service Request Type</label>
+            <input type="text" id="editSRType" class="form-control" readonly />
+          </div>
+          <div class="form-group">
+            <label for="editSRDesc">Description</label>
+            <textarea id="editSRDesc" class="form-control" rows="3" required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary">Submit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div><!-- end crm-app -->
+
+<!-- JS deps -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
+<!-- Main script -->
+<script src="script.js?v=20250812"></script>
+</body>
+</html>
