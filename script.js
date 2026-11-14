@@ -240,7 +240,21 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 }
 
+// Offer names are shown generically in the CRM (no bank/brand names) - the database values are not changed.
+const OFFER_DISPLAY_NAMES = {
+  'POSB Everyday Card': 'Rewards Card',
+  'DBS Altitude Visa Signature Card': 'Travel Card'
+};
+function offerDisplayName(name) {
+  const n = String(name || '').trim();
+  return OFFER_DISPLAY_NAMES[n] || n.replace(/\b(DBS|POSB|ACME)\b\s*/gi, '').trim() || n;
+}
+
 function customerFirstName(data) { return data.customer_first_name || data.first_name || ''; }
+
+// WhatsApp number = the customer's WhatsApp-registered number (same numbers the ACME Bank website panel uses):
+// the second mobile number when present, otherwise the main mobile.
+function whatsappNumber(data) { return String(data.mobile_no2 || data.mobile_no || '').replace(/\D/g, ''); }
 
 // Calls the notification-log / campaign RPCs (additive, never blocks the main CRM view)
 async function callRpc(name, body) {
@@ -258,6 +272,7 @@ function renderCampaignPanel(data) {
   const types = Object.keys(PROACTIVE_TEMPLATES).filter(t => t !== 'Chat');
   return `<div class="side-card" id="campaignPanel">
     <div class="side-card-title"><span>Proactive Notification</span><span class="region-pill">WhatsApp · ${PROACTIVE_REGION.toUpperCase()}</span></div>
+    <div class="muted-small mb-2">WhatsApp to: <strong>${esc(whatsappNumber(data)) || 'no number'}</strong></div>
     <div class="type-buttons" role="group" aria-label="Notification type">
       ${types.map(t => `<button type="button" class="btn btn-sm btn-proactive-type" data-type="${t}">${t}</button>`).join('')}
     </div>
@@ -287,7 +302,7 @@ function renderCampaignDetails(info) {
   const offersEl = document.getElementById('offersList');
   if (offersEl) offersEl.innerHTML = offers.length ? offers.map(o => `
     <div class="offer-item">
-      <div class="offer-top"><strong>${esc(o.product_name)}</strong><span class="badge badge-offer ${esc(o.eligibility_status)}">${esc(o.eligibility_status)}</span></div>
+      <div class="offer-top"><strong>${esc(offerDisplayName(o.product_name))}</strong><span class="badge badge-offer ${esc(o.eligibility_status)}">${esc(o.eligibility_status)}</span></div>
       <div class="offer-headline">${esc(o.headline)}</div>
       ${o.valid_until ? `<div class="muted-small">Valid until ${esc(formatPaymentDate(o.valid_until))}</div>` : ''}
     </div>`).join('') : 'No active offers for this customer.';
@@ -329,7 +344,7 @@ function setProactiveStatus(cls, text) {
 
 function bindProactiveHandlers(data) {
   const name = customerFirstName(data);
-  const phone = String(data.mobile_no || '').replace(/\D/g, '');
+  const phone = whatsappNumber(data);
   selectedProactiveType = '';
 
   $(document).off('click.crmProactiveType', '.btn-proactive-type')
@@ -438,6 +453,10 @@ async function showCustomer(data) {
   const srs = data.service_requests || [];
   const openSrs = srs.filter(sr => sr.status === 'Open').length;
 
+  // Display only (database and action payloads unchanged): the WhatsApp number is shown as the primary mobile.
+  const primaryMobile = String(data.mobile_no2 || data.mobile_no || '');
+  const alternateMobile = String(data.mobile_no2 && data.mobile_no && data.mobile_no2 !== data.mobile_no ? data.mobile_no : '');
+
   // ---- Customer 360 header + KPI strip ----
   let html = `<div class="customer-info-card c360-header mb-3">
     <div class="c360-top">
@@ -448,8 +467,8 @@ async function showCustomer(data) {
       </div>
     </div>
     <div class="customer-info-grid">
-      <div class="customer-info-item"><span>Mobile</span><strong>${data.mobile_no || 'Not available'}</strong></div>
-      <div class="customer-info-item"><span>Alternate Mobile</span><strong>${data.mobile_no2 || 'Not available'}</strong></div>
+      <div class="customer-info-item"><span>Primary Mobile (WhatsApp)</span><strong>${primaryMobile || 'Not available'}</strong></div>
+      <div class="customer-info-item"><span>Alternate Mobile</span><strong>${alternateMobile || 'Not available'}</strong></div>
       <div class="customer-info-item"><span>Email</span><strong>${data.email || 'Not available'}</strong></div>
       <div class="customer-info-item"><span>City</span><strong>${data.customer_city || data.city || 'Not available'}</strong></div>
       <div class="customer-info-item"><span>Address</span><strong>${data.customer_address || data.address || 'Not available'}</strong></div>
