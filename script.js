@@ -557,11 +557,16 @@ async function showCustomer(data) {
 
 function renderCardActions(card, type) {
   const status = (card.status || '').toLowerCase();
+  const isLost = /lost/i.test(status);
+  const isReissued = /re\-?issued?/i.test(status);
+  // Lost card: everything is disabled except Reissue. Re-issued card: Reissue/Lost/Dispute disabled (as before).
+  const blockDis = isLost ? 'disabled' : '';
   let actions = status !== 'blocked'
-    ? `<button class="btn btn-sm btn-block-card" data-type="${type}" data-no="${card.card_number}">Block</button> `
-    : `<button class="btn btn-sm btn-unblock-card" data-type="${type}" data-no="${card.card_number}">UnBlock</button> `;
-  const dis = (/re\-?issued?/i.test(status) || /lost/i.test(status)) ? 'disabled' : '';
-  actions += `<button class="btn btn-sm btn-reissue-card" data-type="${type}" data-no="${card.card_number}" ${dis}>Reissue</button>
+    ? `<button class="btn btn-sm btn-block-card" data-type="${type}" data-no="${card.card_number}" ${blockDis}>Block</button> `
+    : `<button class="btn btn-sm btn-unblock-card" data-type="${type}" data-no="${card.card_number}" ${blockDis}>UnBlock</button> `;
+  const reissueDis = isReissued ? 'disabled' : '';
+  const dis = (isReissued || isLost) ? 'disabled' : '';
+  actions += `<button class="btn btn-sm btn-reissue-card" data-type="${type}" data-no="${card.card_number}" ${reissueDis}>Reissue</button>
               <button class="btn btn-sm btn-mark-lost" data-type="${type}" data-no="${card.card_number}" ${dis}>Lost</button>
               <button class="btn btn-sm btn-dispute" data-type="${type}" data-no="${card.card_number}" ${dis}>Dispute</button>`;
   return actions;
