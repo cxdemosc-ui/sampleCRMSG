@@ -217,8 +217,204 @@ async function refreshCustomerData() {
 }
 
 /* ==============================
-   RENDERING
+   PROACTIVE NOTIFICATION (same webhooks + payload as the ACME Bank website panel)
    ============================== */
+
+// Each tenant's CRM uses its own region's proactive webhook.
+const PROACTIVE_REGION = 'sg';   // 'sg' or 'us'
+const PROACTIVE_WEBHOOKS = {
+  sg: 'https://hooks.sg.webexconnect.io/events/CSWMWVJ81X',
+  us: 'https://hooks.us.webexconnect.io/events/K2PYR77SOP'
+};
+const PROACTIVE_TEMPLATES = {
+  Notification: 'Hi {name}, ACME Bank has an important update for you. Reply here to continue with our Contact Center on WhatsApp.',
+  Offer:        'Hi {name}, ACME Bank has a new offer available for you. Reply here to connect with our Contact Center on WhatsApp.',
+  Reminder:     'Hi {name}, this is an ACME Bank reminder. Reply here if you would like help from our Contact Center on WhatsApp.',
+  Chat:         'Hi {name}, tap here to continue your conversation with ACME Bank Contact Center on WhatsApp.'
+};
+
+let latestCampaignInfo = null;
+let selectedProactiveType = '';
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+function customerFirstName(data) { return data.customer_first_name || data.first_name || ''; }
+
+// Calls the notification-log / campaign RPCs (additive, never blocks the main CRM view)
+async function callRpc(name, body) {
+  const r = await fetch(RPC_BASE_URL + name, {
+    method: 'POST',
+    headers: { apikey: API_KEY, Authorization: `Bearer ${AUTH_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error(`RPC ${name} failed: ${r.status}`);
+  return r.json();
+}
+
+function renderCampaignPanel(data) {
+  const name = customerFirstName(data);
+  const types = Object.keys(PROACTIVE_TEMPLATES).filter(t => t !== 'Chat');
+  return `<div class="side-card" id="campaignPanel">
+    <div class="side-card-title"><span>Proactive Notification</span><span class="region-pill">WhatsApp · ${PROACTIVE_REGION.toUpperCase()}</span></div>
+    <div class="type-buttons" role="group" aria-label="Notification type">
+      ${types.map(t => `<button type="button" class="btn btn-sm btn-proactive-type" data-type="${t}">${t}</button>`).join('')}
+    </div>
+    <div id="proactivePreview" class="proactive-preview">Choose Offer, Notification or Reminder to preview the WhatsApp message for ${esc(name)}.</div>
+    <button type="button" id="proactiveSendBtn" class="btn btn-primary btn-block" disabled>Send WhatsApp Notification</button>
+    <div id="proactiveStatus" class="proactive-status" style="display:none;"></div>
+  </div>
+  <div class="side-card">
+    <div class="side-card-title"><span>Offers &amp; Campaigns</span></div>
+    <div id="offersList" class="muted-small">Loading offers…</div>
+  </div>
+  <div class="side-card">
+    <div class="side-card-title"><span>Upcoming Payments</span></div>
+    <div id="obligationsList" class="muted-small">Loading…</div>
+  </div>
+  <div class="side-card">
+    <div class="side-card-title"><span>Recently Sent</span></div>
+    <div id="notificationHistory" class="muted-small">Loading…</div>
+  </div>`;
+}
+
+function renderCampaignDetails(info) {
+  const offers = info?.offers || [];
+  const obligations = info?.obligations || [];
+  const sent = info?.notifications || [];
+
+  const offersEl = document.getElementById('offersList');
+  if (offersEl) offersEl.innerHTML = offers.length ? offers.map(o => `
+    <div class="offer-item">
+      <div class="offer-top"><strong>${esc(o.product_name)}</strong><span class="badge badge-offer ${esc(o.eligibility_status)}">${esc(o.eligibility_status)}</span></div>
+      <div class="offer-headline">${esc(o.headline)}</div>
+      ${o.valid_until ? `<div class="muted-small">Valid until ${esc(formatPaymentDate(o.valid_until))}</div>` : ''}
+    </div>`).join('') : 'No active offers for this customer.';
+
+  const obEl = document.getElementById('obligationsList');
+  if (obEl) obEl.innerHTML = obligations.length ? obligations.map(p => `
+    <div class="offer-item">
+      <div class="offer-top"><strong>${esc(p.description || 'Payment due')}</strong><span>${formatMoneyOrUnavailable(p.amount_due ?? null)}</span></div>
+      <div class="muted-small">Due ${esc(formatPaymentDate(p.due_date))} · ${esc(p.status || '')}</div>
+    </div>`).join('') : 'No upcoming payments.';
+
+  const histEl = document.getElementById('notificationHistory');
+  if (histEl) histEl.innerHTML = sent.length ? sent.map(n => `
+    <div class="history-item"><span>${esc(n.message_type)}</span><span class="muted-small">${esc(formatDateDMYHM(n.created_at))} · ${esc(n.delivery_status || '')}</span></div>`).join('') : 'Nothing sent yet.';
+
+  const kpi = document.getElementById('kpiOffers');
+  if (kpi) kpi.textContent = String(offers.length);
+}
+
+async function loadCampaignInfo(data) {
+  try {
+    latestCampaignInfo = await callRpc('get_customer_campaign_info', { p_mobile_no: data.mobile_no });
+    renderCampaignDetails(latestCampaignInfo || {});
+  } catch (e) {
+    console.warn(e);
+    ['offersList', 'obligationsList', 'notificationHistory'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.textContent = 'Not available right now.';
+    });
+  }
+}
+
+function setProactiveStatus(cls, text) {
+  const el = document.getElementById('proactiveStatus');
+  if (!el) return;
+  el.className = `proactive-status ${cls}`;
+  el.textContent = text;
+  el.style.display = 'block';
+}
+
+function bindProactiveHandlers(data) {
+  const name = customerFirstName(data);
+  const phone = String(data.mobile_no || '').replace(/\D/g, '');
+  selectedProactiveType = '';
+
+  $(document).off('click.crmProactiveType', '.btn-proactive-type')
+    .on('click.crmProactiveType', '.btn-proactive-type', function () {
+      selectedProactiveType = this.dataset.type;
+      $('.btn-proactive-type').removeClass('active');
+      $(this).addClass('active');
+      $('#proactivePreview').text(PROACTIVE_TEMPLATES[selectedProactiveType].replace('{name}', name));
+      $('#proactiveSendBtn').prop('disabled', !phone);
+      $('#proactiveStatus').hide();
+    });
+
+  $(document).off('click.crmProactiveSend', '#proactiveSendBtn')
+    .on('click.crmProactiveSend', '#proactiveSendBtn', async function () {
+      if (!selectedProactiveType || !phone) return;
+      if (!confirm(`Send a ${selectedProactiveType} WhatsApp message to ${name} (${phone})?`)) return;
+
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      // Exactly the payload the ACME Bank website panel sends
+      const payload = { Name: name, Phone: phone, channel: 'WhatsApp', messageType: selectedProactiveType };
+      let outcome = 'error';
+      let responseText = '';
+      try {
+        const r = await fetch(PROACTIVE_WEBHOOKS[PROACTIVE_REGION] || PROACTIVE_WEBHOOKS.sg, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const bodyText = await r.text();
+        responseText = bodyText;
+        let d = {};
+        try { d = bodyText ? JSON.parse(bodyText) : {}; } catch { d = { message: bodyText }; }
+        const result = String(d.status || d.Status || d.result || d.state || '').toLowerCase();
+        const message = d.message || d.Message || d.error || d.Error;
+        if (!r.ok || result.includes('fail')) {
+          outcome = 'failed';
+          setProactiveStatus('warning', message || 'Failed to send WhatsApp notification. Please try again.');
+        } else if (result.includes('error')) {
+          outcome = 'error';
+          setProactiveStatus('error', message || 'Error sending WhatsApp notification.');
+        } else {
+          outcome = 'sent';
+          setProactiveStatus('success', message || `WhatsApp ${selectedProactiveType} sent to ${name}. Waiting for customer to respond...`);
+        }
+      } catch (e) {
+        responseText = String(e);
+        setProactiveStatus('error', 'Error sending WhatsApp notification. Please check the webhook or network connection.');
+      }
+
+      // Log to Supabase (best effort - never blocks or breaks the CRM)
+      try {
+        await callRpc('log_proactive_notification', {
+          p_name: name, p_phone: phone, p_region: PROACTIVE_REGION, p_message_type: selectedProactiveType,
+          p_payload: payload, p_delivery_status: outcome, p_response: responseText
+        });
+        await loadCampaignInfo(data);
+      } catch (e) { console.warn('Could not log notification', e); }
+
+      btn.textContent = 'Send WhatsApp Notification';
+      btn.disabled = false;
+    });
+}
+
+/* ==============================
+   RENDERING (Customer 360 layout)
+   ============================== */
+
+function initialsOf(data) {
+  const f = (data.customer_first_name || data.first_name || '').trim();
+  const l = (data.customer_last_name || data.last_name || '').trim();
+  return ((f[0] || '') + (l[0] || '')).toUpperCase() || '?';
+}
+
+function renderTxTable(rows) {
+  return `<table class="table table-sm table-bordered crm-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Reference</th></tr></thead>
+    <tbody>${rows.map(tx => `
+      <tr>
+        <td>${formatDateDMYHM(tx.transaction_date)}</td>
+        <td>${tx.transaction_type || ''}</td>
+        <td>${formatMoney(tx.amount)}</td>
+        <td>${tx.reference_note || ''}</td>
+      </tr>`).join('')}</tbody></table>`;
+}
 
 async function showCustomer(data) {
   latestCustomer = data;
@@ -237,10 +433,19 @@ async function showCustomer(data) {
   const msg = document.getElementById('messageBar');
   if (msg) msg.style.display = 'none';
 
-  let html = `<div class="customer-info-card mb-3">
-    <div class="customer-info-header">
-      <span class="customer-info-label">Customer Information</span>
-      <h5 class="text-primary">${data.customer_first_name || data.first_name} ${data.customer_last_name || data.last_name}</h5>
+  const debitCards = data.debit_cards || [];
+  const creditCards = data.credit_cards || [];
+  const srs = data.service_requests || [];
+  const openSrs = srs.filter(sr => sr.status === 'Open').length;
+
+  // ---- Customer 360 header + KPI strip ----
+  let html = `<div class="customer-info-card c360-header mb-3">
+    <div class="c360-top">
+      <div class="c360-avatar">${esc(initialsOf(data))}</div>
+      <div class="c360-id">
+        <span class="customer-info-label">Customer 360</span>
+        <h5 class="text-primary">${data.customer_first_name || data.first_name} ${data.customer_last_name || data.last_name}</h5>
+      </div>
     </div>
     <div class="customer-info-grid">
       <div class="customer-info-item"><span>Mobile</span><strong>${data.mobile_no || 'Not available'}</strong></div>
@@ -249,75 +454,55 @@ async function showCustomer(data) {
       <div class="customer-info-item"><span>City</span><strong>${data.customer_city || data.city || 'Not available'}</strong></div>
       <div class="customer-info-item"><span>Address</span><strong>${data.customer_address || data.address || 'Not available'}</strong></div>
     </div>
-  </div>`;
+  </div>
+  <div class="kpi-strip mb-3">
+    <div class="kpi"><span>Account Number</span><strong>${data.account_number || 'Not available'}</strong></div>
+    <div class="kpi"><span>Account Balance</span><strong>${formatMoneyOrUnavailable(data.account_balance)}</strong></div>
+    <div class="kpi"><span>Cards</span><strong>${debitCards.length + creditCards.length}</strong></div>
+    <div class="kpi"><span>Open Requests</span><strong>${openSrs}</strong></div>
+    <div class="kpi"><span>Active Offers</span><strong id="kpiOffers">–</strong></div>
+  </div>
+  <div class="row">
+  <div class="col-xl-8 c360-main">`;
 
-  html += renderAccountSummary(data);
-
-  // Savings Account section FIRST (transaction_medium null => treat as "Savings")
+  // ---- Savings Account (transaction_medium null => "Savings") ----
   const savingsTxs = (data.recent_transactions || []).filter(
     tx => !tx.transaction_medium || String(tx.transaction_medium).toLowerCase() === 'savings'
   );
   html += `<h6 class="text-primary">Savings Account Transactions</h6>`;
-  html += savingsTxs.length
-    ? `<table class="table table-sm table-bordered crm-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Reference</th></tr></thead>
-       <tbody>${savingsTxs.map(tx => `
-         <tr>
-           <td>${formatDateDMYHM(tx.transaction_date)}</td>
-           <td>${tx.transaction_type || ''}</td>
-           <td>${formatMoney(tx.amount)}</td>
-           <td>${tx.reference_note || ''}</td>
-         </tr>`).join('')}</tbody></table>`
-    : `<p>No savings account transactions found.</p>`;
+  html += savingsTxs.length ? renderTxTable(savingsTxs) : `<p>No savings account transactions found.</p>`;
 
-  // Debit Card section
+  // ---- Debit Card ----
   html += `<h6 class="text-primary">Debit Card</h6>`;
-  html += (data.debit_cards || []).map(c => `
+  html += debitCards.map(c => `
     <div class="border rounded p-2 mb-2 bg-white card-section">
       <div class="card-heading">
         <span>${maskCard(c.card_number)} ${cardStatusBadge(c.status)}</span>
         ${renderCardExpiry(c)}
       </div>
-      ${(c.transactions && c.transactions.length)
-        ? `<table class="table table-sm table-bordered crm-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Reference</th></tr></thead>
-           <tbody>${c.transactions.map(tx => `
-             <tr>
-               <td>${formatDateDMYHM(tx.transaction_date)}</td>
-               <td>${tx.transaction_type || ''}</td>
-               <td>${formatMoney(tx.amount)}</td>
-               <td>${tx.reference_note || ''}</td>
-             </tr>`).join('')}</tbody></table>`
-        : '<p>No debit card transactions found.</p>'}
+      ${(c.transactions && c.transactions.length) ? renderTxTable(c.transactions) : '<p>No debit card transactions found.</p>'}
       <div class="card-actions">${renderCardActions(c, "Debit")}</div>
     </div>`).join('');
 
-  // Credit Card section
+  // ---- Credit Card ----
   html += `<h6 class="text-primary">Credit Card</h6>`;
-  html += (data.credit_cards || []).map(c => `
+  html += creditCards.map(c => `
     <div class="border rounded p-2 mb-2 bg-white card-section">
       <div class="card-heading">
         <span>${maskCard(c.card_number)} ${cardStatusBadge(c.status)}</span>
         ${renderCardExpiry(c)}
       </div>
       ${renderCreditPaymentSummary(c)}
-      ${(c.transactions && c.transactions.length)
-        ? `<table class="table table-sm table-bordered crm-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Reference</th></tr></thead>
-           <tbody>${c.transactions.map(tx => `
-             <tr>
-               <td>${formatDateDMYHM(tx.transaction_date)}</td>
-               <td>${tx.transaction_type || ''}</td>
-               <td>${formatMoney(tx.amount)}</td>
-               <td>${tx.reference_note || ''}</td>
-             </tr>`).join('')}</tbody></table>`
-        : '<p>No credit card transactions found.</p>'}
+      ${(c.transactions && c.transactions.length) ? renderTxTable(c.transactions) : '<p>No credit card transactions found.</p>'}
       <div class="card-actions">${renderCardActions(c, "Credit")}</div>
     </div>`).join('');
 
-  // Service Requests
+  // ---- Service Requests ----
   html += `<h6 class="text-primary">Service Requests</h6>`;
-  html += (data.service_requests || []).length
+  html += srs.length
     ? `<table class="table table-sm table-bordered crm-table">
          <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Raised</th><th>Resolution</th><th>Description</th><th>Actions</th></tr></thead>
-         <tbody>${data.service_requests.map(sr => `
+         <tbody>${srs.map(sr => `
            <tr>
              <td>${sr.request_id}</td>
              <td>${sr.request_type || ''}</td>
@@ -336,10 +521,15 @@ async function showCustomer(data) {
     : `<p>No service requests found.</p>
        <div class="mt-2 text-right"><button id="newSRBtn" class="btn btn-primary">Create New Service Request</button></div>`;
 
+  // ---- Right column: campaigns / offers / proactive notification ----
+  html += `</div><aside class="col-xl-4 c360-side">${renderCampaignPanel(data)}</aside></div>`;
+
   div.innerHTML = html;
 
   // Bind/ensure handlers are active for the freshly rendered content
   bindActionHandlers(data);
+  bindProactiveHandlers(data);
+  loadCampaignInfo(data);   // async, non-blocking
 }
 
 /* ==============================
